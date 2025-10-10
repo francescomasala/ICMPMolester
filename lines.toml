@@ -1,0 +1,21 @@
+# Copy to lines.toml and tailor to your environment.
+# Targets may be hostnames or IPs reachable from your broadband lines.
+
+[defaults]
+ping_count = 5
+ping_timeout_ms = 1000        # ms per request (1s)
+traceroute_max_hops = 30
+packet_loss_alert_threshold = 1.5
+
+[[lines]]
+name = "Google"
+target = "8.8.8.8"
+ping_count = 8                # send a few extra probes
+
+[[lines]]
+name = "Hyperbit Core"
+target = "151.242.0.1"
+ping_timeout_ms = 2500        # LTE sometimes needs longer waits
+packet_loss_alert_threshold = 2.5
+
+

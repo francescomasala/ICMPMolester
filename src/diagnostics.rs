@@ -89,11 +89,24 @@ fn ping_args(line: &LineSettings) -> Vec<OsString> {
 
 #[cfg(not(windows))]
 fn ping_args(line: &LineSettings) -> Vec<OsString> {
-    vec![
+    let mut args = vec![
         OsString::from("-c"),
         OsString::from(line.ping_count.to_string()),
         OsString::from(&line.target),
-    ]
+    ];
+
+    if line.ping_timeout_ms > 0 {
+        args.insert(2, OsString::from("-W"));
+        let timeout_value = if cfg!(target_os = "linux") {
+            let secs = std::cmp::max(1, (line.ping_timeout_ms + 999) / 1000);
+            secs.to_string()
+        } else {
+            line.ping_timeout_ms.to_string()
+        };
+        args.insert(3, OsString::from(timeout_value));
+    }
+
+    args
 }
 
 #[cfg(windows)]

@@ -122,6 +122,10 @@ fn print_ping_summary(result: &LineResult) {
         Some(latency) => println!("Average latency: {latency:.2} ms"),
         None => println!("Average latency: unavailable"),
     }
+
+    if !result.ping.success {
+        print_command_output("Ping output", &result.ping.raw_output);
+    }
 }
 
 fn print_traceroute_summary(report: &TracerouteReport) {
@@ -130,6 +134,10 @@ fn print_traceroute_summary(report: &TracerouteReport) {
         Some(line) if !line.trim().is_empty() => println!("First hop: {line}"),
         _ => println!("Traceroute output empty"),
     }
+
+    if !report.success {
+        print_command_output("Traceroute output", &report.raw_output);
+    }
 }
 
 fn bool_to_status(success: bool) -> &'static str {
@@ -137,6 +145,17 @@ fn bool_to_status(success: bool) -> &'static str {
         "OK success"
     } else {
         "ALERT command failed"
+    }
+}
+
+fn print_command_output(title: &str, body: &str) {
+    let mut lines = body.lines();
+    println!("{title}:");
+    for line in lines.by_ref().take(5) {
+        println!("  {line}");
+    }
+    if lines.next().is_some() {
+        println!("  ...");
     }
 }
 
