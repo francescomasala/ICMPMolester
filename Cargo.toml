@@ -2,6 +2,14 @@
 name = "icmpmolester"
 version = "0.1.0"
 edition = "2024"
+description = "Async broadband diagnostics CLI that checks latency, packet loss, and hop counts across multiple lines."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/francescomasala/ICMPMolester"
+homepage = "https://github.com/francescomasala/ICMPMolester"
+keywords = ["ping", "network", "cli", "monitoring", "traceroute"]
+categories = ["command-line-utilities", "network-programming"]
+rust-version = "1.85"
 
 [dependencies]
 anyhow = "1.0"
@@ -11,3 +19,5 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
 ureq = { version = "2.9", default-features = false, features = ["tls", "json"] }
+tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "process"] }
+futures = "0.3"

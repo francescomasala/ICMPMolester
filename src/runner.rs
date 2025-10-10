@@ -1,6 +1,7 @@
 //! Orchestrates diagnostics execution and presentation.
 
 use anyhow::{Context, Result};
+use futures::future::try_join_all;
 
 use crate::config::Config;
 use crate::diagnostics::{PingReport, TracerouteReport, run_ping, run_traceroute};
@@ -22,33 +23,36 @@ pub struct LineResult {
 }
 
 /// Execute diagnostics for every configured line and collect results.
-pub fn run_lines(config: Config, options: RunOptions) -> Result<Vec<LineResult>> {
-    let mut results = Vec::new();
+pub async fn run_lines(config: Config, options: RunOptions) -> Result<Vec<LineResult>> {
+    let futures = config.lines.into_iter().map(|line| {
+        let skip_traceroute = options.skip_traceroute;
+        async move {
+            let ping_report = run_ping(&line)
+                .await
+                .with_context(|| format!("Ping check failed for line '{}'", line.name))?;
 
-    for line in config.lines {
-        let ping_report = run_ping(&line)
-            .with_context(|| format!("Ping check failed for line '{}'", line.name))?;
+            let traceroute_report = if skip_traceroute {
+                None
+            } else {
+                Some(
+                    run_traceroute(&line)
+                        .await
+                        .with_context(|| format!("Traceroute failed for line '{}'", line.name))?,
+                )
+            };
 
-        let traceroute_report = if options.skip_traceroute {
-            None
-        } else {
-            Some(
-                run_traceroute(&line)
-                    .with_context(|| format!("Traceroute failed for line '{}'", line.name))?,
-            )
-        };
+            Ok(LineResult {
+                name: line.name,
+                target: line.target,
+                loss_threshold: line.packet_loss_alert_threshold,
+                ping: ping_report,
+                traceroute: traceroute_report,
+                traceroute_requested: !skip_traceroute,
+            }) as Result<LineResult>
+        }
+    });
 
-        results.push(LineResult {
-            name: line.name,
-            target: line.target,
-            loss_threshold: line.packet_loss_alert_threshold,
-            ping: ping_report,
-            traceroute: traceroute_report,
-            traceroute_requested: !options.skip_traceroute,
-        });
-    }
-
-    Ok(results)
+    try_join_all(futures).await
 }
 
 /// Stream a human-friendly summary of the diagnostic results to STDOUT.
@@ -94,10 +98,16 @@ pub fn format_summary(results: &[LineResult]) -> String {
             (None, true) => "ALERT",
             (None, false) => "SKIPPED",
         };
+        let hops_text = result
+            .traceroute
+            .as_ref()
+            .and_then(|r| r.hop_count)
+            .map(|h| h.to_string())
+            .unwrap_or_else(|| "n/a".into());
 
         summary.push_str(&format!(
-            "- {} ({}): ping={ping_status}, loss={loss_text} ({loss_status}), latency={}, traceroute={}\n",
-            result.name, result.target, latency_text, traceroute_status
+            "- {} ({}): ping={ping_status}, loss={loss_text} ({loss_status}), latency={}, traceroute={}, hops={}\n",
+            result.name, result.target, latency_text, traceroute_status, hops_text
         ));
     }
 
@@ -133,6 +143,11 @@ fn print_traceroute_summary(report: &TracerouteReport) {
     match report.raw_output.lines().next() {
         Some(line) if !line.trim().is_empty() => println!("First hop: {line}"),
         _ => println!("Traceroute output empty"),
+    }
+
+    match report.hop_count {
+        Some(hops) => println!("Hops observed: {hops}"),
+        None => println!("Hop count: unavailable"),
     }
 
     if !report.success {
@@ -183,6 +198,7 @@ mod tests {
             },
             traceroute: traceroute_success.map(|ok| TracerouteReport {
                 success: ok,
+                hop_count: Some(5),
                 raw_output: String::new(),
             }),
             traceroute_requested: traceroute_success.is_some(),
@@ -202,6 +218,7 @@ mod tests {
         assert!(summary.contains("loss=0.50% (OK)"));
         assert!(summary.contains("ping=ALERT"));
         assert!(summary.contains("traceroute=ALERT"));
+        assert!(summary.contains("hops=5"));
         assert!(summary.contains("Lab (10.0.0.1):"));
         assert!(summary.contains("traceroute=SKIPPED"));
     }

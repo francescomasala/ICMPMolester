@@ -1,60 +1,78 @@
-# ICMPMolester Usage Guide
+# ICMPMolester
 
-## Prerequisites
-- Rust toolchain 1.78+ (if running natively).
-- ICMP and traceroute permissions (Linux typically needs `CAP_NET_RAW`, macOS requires sudo for traceroute).
-- Outbound SMTP or Telegram access when using notifications.
+ICMPMolester is an asynchronous command-line tool that checks latency, packet
+loss, and hop counts across multiple broadband lines. It runs `ping` and
+`traceroute` concurrently for each configured circuit, summarises the results in
+your terminal, and can optionally forward a concise report via email or
+Telegram.
 
-## Configuration
-Create a `lines.toml` based on `lines.example.toml`. Each entry defines a broadband line to probe:
+## Features
+- Async execution built on Tokio for low-overhead, multi-line probing.
+- Configurable per-line settings for ping count, timeouts, traceroute depth, and
+  alert thresholds.
+- CLI summaries that highlight packet-loss breaches and show hop counts.
+- Optional email (SMTP) and Telegram notifications, reusing the same summary
+  text.
+- Docker-ready image for environments where raw socket access is isolated.
 
-```toml
-[defaults]
-ping_count = 5
-packet_loss_alert_threshold = 1.0
+## Quick Start
 
-[[lines]]
-name = "Primary FTTH"
-target = "8.8.8.8"
-ping_count = 8
-```
+1. **Install prerequisites**
+   - Rust toolchain 1.78+.
+   - ICMP/traceroute permissions (Linux usually needs `CAP_NET_RAW`; macOS
+     requires sudo for traceroute).
+   - Network reachability to your probe targets and, if using notifications,
+     outbound SMTP or Telegram access.
 
-### Field reference
-- `ping_count`: ICMP echo attempts per run.
-- `ping_timeout_ms`: per-request timeout (platform dependent).
-- `traceroute_max_hops`: cap on hop depth.
-- `packet_loss_alert_threshold`: percentage that triggers an alert status.
+2. **Create a configuration file**
+   Copy `lines.example.toml` to `lines.toml` and adjust to match your circuits:
 
-## Running Locally
-```sh
-cargo run -- --config lines.toml
-cargo run -- --config lines.toml --skip-traceroute
-```
-Outputs a per-line summary with latency and loss indicators. The process exits non-zero if ping or traceroute commands fail to launch.
+   ```toml
+   [defaults]
+   ping_count = 5
+   ping_timeout_ms = 1000
+   traceroute_max_hops = 30
+   packet_loss_alert_threshold = 1.5
 
-### Email & Telegram Notifications
-Provide credentials via flags; omit them to stay CLI-only.
+   [[lines]]
+   name = "Primary FTTH"
+   target = "8.8.8.8"
+   ping_count = 8
+   ```
 
-```sh
-cargo run -- \
-  --config lines.toml \
-  --email-smtp smtp.example.com \
-  --email-from bot@example.com \
-  --email-to netops@example.com \
-  --email-username bot@example.com \
-  --email-password 'secret'
-```
+3. **Run diagnostics**
 
-```sh
-cargo run -- \
-  --config lines.toml \
-  --telegram-token "123456:ABC" \
-  --telegram-chat-id "-1000123456"
-```
+   ```sh
+   cargo run -- --config lines.toml
+   cargo run -- --config lines.toml --skip-traceroute   # ping-only
+   ```
 
-Summary text is reused across transports. Telegram messages are truncated at 4096 chars.
+   The CLI prints latency, packet loss, and hop counts. Non-zero exit codes
+   indicate a ping/traceroute command failure.
 
-## Docker Workflow
+4. **Send notifications (optional)**
+
+   ```sh
+   cargo run -- \
+     --config lines.toml \
+     --email-smtp smtp.example.com \
+     --email-from bot@example.com \
+     --email-to netops@example.com \
+     --email-username bot@example.com \
+     --email-password 'secret'
+   ```
+
+   ```sh
+   cargo run -- \
+     --config lines.toml \
+     --telegram-token "123456:ABC" \
+     --telegram-chat-id "-1000123456"
+   ```
+
+   Telegram messages are truncated at 4096 characters to satisfy API limits.
+
+## Docker Usage
+
 ```sh
 docker build -t icmpmolester .
 docker run --rm \
@@ -63,15 +81,42 @@ docker run --rm \
   -v $(pwd)/lines.toml:/app/lines.toml \
   icmpmolester --config /app/lines.toml
 ```
-Granting raw socket caps enables ping inside the container. Add env vars or secrets management for SMTP/Telegram credentials.
 
-## Testing
+Grant raw socket capabilities so the container can invoke `ping`. Pass SMTP or
+Telegram credentials via environment variables or secrets management as
+required.
+
+## Development
+
 ```sh
+cargo fmt
+cargo clippy -- -D warnings
 cargo test -- --nocapture
 ```
-Unit tests cover config parsing, metric extraction, and notification helpers. For integration checks, run the binary against known hosts (`ping` requires reachable addresses and ICMP access).
+
+Unit tests cover config parsing, metric extraction (including hop counts), and
+notification helpers. For live network checks, run the binary against trusted
+hosts in a controlled environment.
 
 ## Troubleshooting
-- `Operation not permitted`: the OS blocked ICMP; run as root or add `CAP_NET_RAW`.
-- `ping: cannot resolve host`: DNS failure—ensure connectivity or use raw IP targets.
-- SMTP errors usually signal incorrect credentials or blocked outbound port 587/465.
+- `Operation not permitted`: missing raw socket permissions—add `CAP_NET_RAW` or
+  run with elevated privileges.
+- `ping: cannot resolve host`: DNS failure; verify connectivity or use IP
+  addresses.
+- SMTP authentication failures commonly stem from invalid credentials or blocked
+  outbound ports (587/465).
+
+## Security
+
+Refer to [SECURITY.md](SECURITY.md) for vulnerability reporting guidelines.
+
+## Contributing
+
+Community contributions are welcome. Please open an issue to propose significant
+changes before raising a pull request. All code must pass `cargo fmt`, `cargo
+clippy -- -D warnings`, and `cargo test -- --nocapture`. Follow the guidance in
+[`AGENTS.md`](AGENTS.md) for coding conventions and PR expectations.
+
+## License
+
+Released under the [MIT License](LICENSE).

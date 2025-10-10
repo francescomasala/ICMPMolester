@@ -1,8 +1,8 @@
 //! Shell-based diagnostics helpers (ping/traceroute execution and parsing).
 
 use std::ffi::OsString;
-use std::process::Command;
 use std::sync::OnceLock;
+use tokio::process::Command;
 
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -22,11 +22,12 @@ pub struct PingReport {
 #[derive(Debug)]
 pub struct TracerouteReport {
     pub success: bool,
+    pub hop_count: Option<u32>,
     pub raw_output: String,
 }
 
 /// Execute ping for a configured line and parse loss/latency.
-pub fn run_ping(line: &LineSettings) -> Result<PingReport> {
+pub async fn run_ping(line: &LineSettings) -> Result<PingReport> {
     let mut command = Command::new(ping_command());
     for arg in ping_args(line) {
         command.arg(arg);
@@ -34,6 +35,7 @@ pub fn run_ping(line: &LineSettings) -> Result<PingReport> {
 
     let output = command
         .output()
+        .await
         .with_context(|| format!("Failed to execute ping for {}", line.name))?;
 
     let raw_output = collect_output(&output.stdout, &output.stderr);
@@ -49,7 +51,7 @@ pub fn run_ping(line: &LineSettings) -> Result<PingReport> {
 }
 
 /// Execute traceroute for a configured line and capture raw output.
-pub fn run_traceroute(line: &LineSettings) -> Result<TracerouteReport> {
+pub async fn run_traceroute(line: &LineSettings) -> Result<TracerouteReport> {
     let mut command = Command::new(traceroute_command());
     for arg in traceroute_args(line) {
         command.arg(arg);
@@ -57,11 +59,14 @@ pub fn run_traceroute(line: &LineSettings) -> Result<TracerouteReport> {
 
     let output = command
         .output()
+        .await
         .with_context(|| format!("Failed to execute traceroute for {}", line.name))?;
     let raw_output = collect_output(&output.stdout, &output.stderr);
+    let hop_count = extract_hop_count(&raw_output, &line.target);
 
     Ok(TracerouteReport {
         success: output.status.success(),
+        hop_count,
         raw_output,
     })
 }
@@ -180,6 +185,26 @@ fn collect_output(stdout: &[u8], stderr: &[u8]) -> String {
     body
 }
 
+fn extract_hop_count(output: &str, target: &str) -> Option<u32> {
+    let mut last_seen = None;
+    for line in output.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let hop = match parts.next().and_then(|s| s.parse::<u32>().ok()) {
+            Some(num) => num,
+            None => continue,
+        };
+        last_seen = Some(hop);
+        if trimmed.contains(target) {
+            return Some(hop);
+        }
+    }
+    last_seen
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,5 +246,26 @@ Approximate round trip times in milli-seconds:
 
         let out = collect_output(b"", b"err");
         assert_eq!(out, "err");
+    }
+
+    #[test]
+    fn extracts_hop_count_when_target_seen() {
+        let sample = r#"
+ 1  192.0.2.1  1.234 ms
+ 2  198.51.100.1  4.567 ms
+ 3  example.com (203.0.113.10)  8.901 ms
+"#;
+        assert_eq!(extract_hop_count(sample, "203.0.113.10"), Some(3));
+        assert_eq!(extract_hop_count(sample, "example.com"), Some(3));
+    }
+
+    #[test]
+    fn extracts_last_hop_when_target_missing() {
+        let sample = r#"
+ 1  192.0.2.1  1.234 ms
+ 2  * * *
+ 3  198.51.100.1  4.567 ms
+"#;
+        assert_eq!(extract_hop_count(sample, "unreachable.example"), Some(3));
     }
 }

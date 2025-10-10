@@ -55,14 +55,15 @@ struct Cli {
     telegram_chat_id: Option<String>,
 }
 
-fn main() -> Result<()> {
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = load_config(&cli.config)?;
     let options = RunOptions {
         skip_traceroute: cli.skip_traceroute,
     };
 
-    let results = run_lines(config, options)?;
+    let results = run_lines(config, options).await?;
     print_cli(&results);
 
     let summary = format_summary(&results);
