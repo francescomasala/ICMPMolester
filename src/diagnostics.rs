@@ -98,7 +98,7 @@ fn ping_args(line: &LineSettings) -> Vec<OsString> {
     if line.ping_timeout_ms > 0 {
         args.insert(2, OsString::from("-W"));
         let timeout_value = if cfg!(target_os = "linux") {
-            let secs = std::cmp::max(1, (line.ping_timeout_ms + 999) / 1000);
+            let secs = std::cmp::max(1, line.ping_timeout_ms.div_ceil(1000));
             secs.to_string()
         } else {
             line.ping_timeout_ms.to_string()
