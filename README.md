@@ -114,8 +114,7 @@ Refer to [SECURITY.md](SECURITY.md) for vulnerability reporting guidelines.
 
 Community contributions are welcome. Please open an issue to propose significant
 changes before raising a pull request. All code must pass `cargo fmt`, `cargo
-clippy -- -D warnings`, and `cargo test -- --nocapture`. Follow the guidance in
-[`AGENTS.md`](AGENTS.md) for coding conventions and PR expectations.
+clippy -- -D warnings`, and `cargo test -- --nocapture`.
 
 ## License
 
