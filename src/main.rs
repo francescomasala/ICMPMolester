@@ -26,6 +26,10 @@ struct Cli {
     #[arg(long)]
     skip_traceroute: bool,
 
+    /// Maximum number of lines to probe concurrently (defaults to CPU count)
+    #[arg(long)]
+    concurrency: Option<usize>,
+
     /// SMTP server address for email notifications (e.g. smtp.example.com)
     #[arg(long)]
     email_smtp: Option<String>,
@@ -61,6 +65,7 @@ async fn main() -> Result<()> {
     let config = load_config(&cli.config)?;
     let options = RunOptions {
         skip_traceroute: cli.skip_traceroute,
+        concurrency_limit: cli.concurrency,
     };
 
     let results = run_lines(config, options).await?;
@@ -77,7 +82,8 @@ async fn main() -> Result<()> {
     }
 
     if let Some(telegram_cfg) = build_telegram_config(&cli)? {
-        send_telegram(&summary, &telegram_cfg)?;
+        let compact_summary = runner::format_compact_summary(&results);
+        send_telegram(&compact_summary, &telegram_cfg)?;
         println!(
             "Telegram notification dispatched to {}",
             telegram_cfg.chat_id

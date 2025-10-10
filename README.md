@@ -45,6 +45,7 @@ Telegram.
    ```sh
    cargo run -- --config lines.toml
    cargo run -- --config lines.toml --skip-traceroute   # ping-only
+   cargo run -- --config lines.toml --concurrency 8     # limit concurrent probes
    ```
 
    The CLI prints latency, packet loss, and hop counts. Non-zero exit codes
@@ -69,7 +70,7 @@ Telegram.
      --telegram-chat-id "-1000123456"
    ```
 
-   Telegram messages are truncated at 4096 characters to satisfy API limits.
+   Telegram messages use a compact summary and are truncated at 4096 characters to satisfy API limits.
 
 ## Docker Usage
 

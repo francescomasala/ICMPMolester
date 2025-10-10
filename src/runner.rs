@@ -1,7 +1,7 @@
 //! Orchestrates diagnostics execution and presentation.
 
 use anyhow::{Context, Result};
-use futures::future::try_join_all;
+use futures::{StreamExt, TryStreamExt, stream};
 
 use crate::config::Config;
 use crate::diagnostics::{PingReport, TracerouteReport, run_ping, run_traceroute};
@@ -9,6 +9,7 @@ use crate::diagnostics::{PingReport, TracerouteReport, run_ping, run_traceroute}
 /// Options that control how ICMPMolester runs diagnostics.
 pub struct RunOptions {
     pub skip_traceroute: bool,
+    pub concurrency_limit: Option<usize>,
 }
 
 /// Aggregated diagnostic outcome for a single broadband line.
@@ -24,35 +25,42 @@ pub struct LineResult {
 
 /// Execute diagnostics for every configured line and collect results.
 pub async fn run_lines(config: Config, options: RunOptions) -> Result<Vec<LineResult>> {
-    let futures = config.lines.into_iter().map(|line| {
-        let skip_traceroute = options.skip_traceroute;
-        async move {
-            let ping_report = run_ping(&line)
-                .await
-                .with_context(|| format!("Ping check failed for line '{}'", line.name))?;
-
-            let traceroute_report = if skip_traceroute {
-                None
-            } else {
-                Some(
-                    run_traceroute(&line)
-                        .await
-                        .with_context(|| format!("Traceroute failed for line '{}'", line.name))?,
-                )
-            };
-
-            Ok(LineResult {
-                name: line.name,
-                target: line.target,
-                loss_threshold: line.packet_loss_alert_threshold,
-                ping: ping_report,
-                traceroute: traceroute_report,
-                traceroute_requested: !skip_traceroute,
-            }) as Result<LineResult>
-        }
+    let concurrency = options.concurrency_limit.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
     });
 
-    try_join_all(futures).await
+    stream::iter(config.lines)
+        .map(|line| {
+            let skip_traceroute = options.skip_traceroute;
+            async move {
+                let ping_report = run_ping(&line)
+                    .await
+                    .with_context(|| format!("Ping check failed for line '{}'", line.name))?;
+
+                let traceroute_report =
+                    if skip_traceroute {
+                        None
+                    } else {
+                        Some(run_traceroute(&line).await.with_context(|| {
+                            format!("Traceroute failed for line '{}'", line.name)
+                        })?)
+                    };
+
+                Ok(LineResult {
+                    name: line.name,
+                    target: line.target,
+                    loss_threshold: line.packet_loss_alert_threshold,
+                    ping: ping_report,
+                    traceroute: traceroute_report,
+                    traceroute_requested: !skip_traceroute,
+                })
+            }
+        })
+        .buffer_unordered(concurrency)
+        .try_collect()
+        .await
 }
 
 /// Stream a human-friendly summary of the diagnostic results to STDOUT.
@@ -108,6 +116,44 @@ pub fn format_summary(results: &[LineResult]) -> String {
         summary.push_str(&format!(
             "- {} ({}): ping={ping_status}, loss={loss_text} ({loss_status}), latency={}, traceroute={}, hops={}\n",
             result.name, result.target, latency_text, traceroute_status, hops_text
+        ));
+    }
+
+    summary
+}
+
+/// Produce a condensed summary optimized for short transport channels (e.g. Telegram).
+pub fn format_compact_summary(results: &[LineResult]) -> String {
+    let mut summary = String::from("ICMPMolester report\n");
+
+    for result in results {
+        let ping_status = if result.ping.success { "✅" } else { "⚠️" };
+        let loss = result
+            .ping
+            .packet_loss_pct
+            .map(|loss| format!("{loss:.2}%"))
+            .unwrap_or_else(|| "n/a".into());
+        let loss_tag = match result.ping.packet_loss_pct {
+            Some(loss) if loss > result.loss_threshold => "alert",
+            Some(_) => "ok",
+            None => "n/a",
+        };
+        let traceroute_status = match (&result.traceroute, result.traceroute_requested) {
+            (Some(report), _) if report.success => "ok",
+            (Some(_), _) => "alert",
+            (None, true) => "alert",
+            (None, false) => "skip",
+        };
+        let hops = result
+            .traceroute
+            .as_ref()
+            .and_then(|r| r.hop_count)
+            .map(|h| h.to_string())
+            .unwrap_or_else(|| "n/a".into());
+
+        summary.push_str(&format!(
+            "• {name}: ping {ping_status} loss {loss} [{loss_tag}] hops {hops} path {traceroute_status}\n",
+            name = result.name
         ));
     }
 
@@ -221,5 +267,20 @@ mod tests {
         assert!(summary.contains("hops=5"));
         assert!(summary.contains("Lab (10.0.0.1):"));
         assert!(summary.contains("traceroute=SKIPPED"));
+    }
+
+    #[test]
+    fn formats_compact_summary() {
+        let results = vec![
+            sample_result("Primary", true, Some(0.5), Some(12.3), 1.0, Some(true)),
+            sample_result("Backup", false, Some(5.0), None, 1.0, Some(false)),
+        ];
+
+        let summary = format_compact_summary(&results);
+        assert!(summary.contains("ICMPMolester report"));
+        assert!(summary.contains("Primary"));
+        assert!(summary.contains("✅"));
+        assert!(summary.contains("hops 5"));
+        assert!(summary.contains("path alert"));
     }
 }
