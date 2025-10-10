@@ -1,4 +1,4 @@
-FROM rust:1.78-alpine3.19 AS builder
+FROM rust:1.85-alpine3.20 AS builder
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --release
 
-FROM alpine:3.19
+FROM alpine:3.20
 
 WORKDIR /app
 
